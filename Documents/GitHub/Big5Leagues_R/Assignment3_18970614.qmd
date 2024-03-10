@@ -1,0 +1,648 @@
+---
+title: "Assignment3_18970614"
+format: html
+editor: visual
+author: Conor McElduff 18970614
+---
+
+## Packages
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+library(ggplot2)
+library(patchwork)
+library(knitr)
+library(lubridate)
+suppressPackageStartupMessages(library(forecast)) # Used in section two 
+# Suppressing 'zoo' warnings as it will not be used
+```
+
+## Part 1: Analysis
+
+Two datasets are used to form a comprehensive dataset representing Europe's top five football leagues and their financial expenditure. These datasets were sourced from the FBRef website. The dataset detailing team statistics is available at [FBRef Big 5 European Leagues Stats](https://fbref.com/en/comps/Big5/Big-5-European-Leagues-Stats) and the dataset regarding player wages is found at [FBRef Big 5 European Leagues Wages](https://fbref.com/en/comps/Big5/wages/Big-5-European-Leagues-Wages). Both datasets are included in this submission as csv files.
+
+```{r}
+# Load datasets
+Teams <- read.csv("~/Documents/Data_Programming_R/Assignment_3/Europe5Teams.csv",
+                  header = TRUE)
+Wages <- read.csv("~/Documents/Data_Programming_R/Assignment_3/Europe5Wages.csv", 
+                  header = TRUE)
+```
+
+The 'Top.Team.Scorer' variable is separated into two separate variables, the name of the scorer and the number of goals scored, for further investigation later in the report.
+
+```{r}
+# Separate the name and goals scored using the hyphen between them
+split_top_scorer <- strsplit(Teams$Top.Team.Scorer, " - ")
+```
+
+```{r}
+# Apply new variables for the top scorer and the goals they scored
+Teams$Top.Team.Scorer <- sapply(split_top_scorer, function(x) x[1])
+Teams$GoalsScored <- as.integer(sapply(split_top_scorer, function(x) x[2]))
+```
+
+Merging datasets 'Teams' and 'Wages' based on their squad variable and checking the classes for variables that are appropriate.
+
+```{r}
+# Merging Teams and Wages 
+df <- merge(Teams, Wages, by = "Squad")
+str(df)
+```
+
+Renaming variables in the dataframe to improve structure and ease of use.
+
+```{r}
+# Renaming variables to establish more understanding
+df <- rename(df,
+             LeagueRank = LgRk,
+             Points = Pts,
+             PointsPerMatch = Pts.MP,
+             Last5 = Last.5,
+             TopScorer = Top.Team.Scorer,
+             TotalPlayers = X..Pl,
+             'WeeklyWages(EUR)' = Weekly.Wages,
+             'AnnualWages(EUR)' = Annual.Wages
+             )
+```
+
+```{r}
+# Dimensions of the dataframe
+dimensions <- dim(df)
+print(paste("Number of rows: ", dimensions[1]))
+print(paste("Number of columns: ", dimensions[2]))
+```
+
+Converting WeeklyWages and AnnualWages into numeric values while stripping the '€' symbol from the value. Options(scipen = 999) was used to ensure these numeric values were not converted to scientific notation.
+
+```{r}
+#I have included options(scipen=999) to elimiate the use of scientific notation 
+# when converting to an integer
+options(scipen=999)
+df$'WeeklyWages(EUR)' <- as.numeric(gsub("€|,", "", df$'WeeklyWages(EUR)'))
+df$'AnnualWages(EUR)' <- as.numeric(gsub("€|,", "", df$'AnnualWages(EUR)'))
+```
+
+Check for null values in the dataset.
+
+```{r}
+# Find null values in the dataset
+for (col_name in names(df)) {
+  na_count <- sum(is.na(df[[col_name]]))
+  
+  if (na_count > 0) {
+    cat("Column", col_name, "has", na_count, "NA values\n")
+  }
+}
+
+```
+
+Ordered factors for in form teams (Last5) will be introduced in the dataframe - This additional variable will be created using a table scoring system to show the points gained in their last five games rather than ordered factors as with ordered factors, there will be 3\^5 permutations meaning there would be 243 different representations for this dataset.
+
+```{r}
+# Within the Last5, 'W' will represent 3, 'D' will represent 1 
+# and 'L' will represent 0
+calculate_points <- function(results_string) {
+  sum(sapply(strsplit(results_string, "")[[1]], function(result) {
+    if (result == "W") return(3)
+    else if (result == "D") return(1)
+    else return(0)
+  }))
+}
+
+df$Last5Factor <- factor(sapply(df$Last5, calculate_points), 
+                         levels = sort(unique(sapply(df$Last5, calculate_points))), 
+                         ordered = TRUE)
+```
+
+Cleaning the dataset to ensure the variables are applicable to this report. Attendance will be removed as it contains fifteen null values and will not be used.
+
+```{r}
+# Variables to be removed
+columns_to_remove <- c("X.x", "Rk.x", "X.y", "Rk.y", "Attendance")
+df <- df[, !names(df) %in% columns_to_remove]
+```
+
+```{r}
+# Number of unique teams in the dataset
+cat("Number of teams represented: ", length(unique(df$Squad)))
+```
+
+This matches the expected ninety six teams across the five leagues, as broken down below:
+
+Premier League - 20 teams
+
+La Liga - 20 teams
+
+Serie A - 20 teams
+
+Bundesliga - 18 teams
+
+Ligue 1 - 18 teams
+
+### Team Performance Analysis
+
+The performance of teams based on the goals scored, goals conceded and their ratio for points per match within the first half of the season in their respective leagues.
+
+```{r}
+# Select the best team based on GF, GA, PointsPerMatch, xG, xGD and Last5Factor
+best_team <- df[order(-df$GF, df$GA, -df$PointsPerMatch, -df$xG, 
+                      df$xGA, df$Last5Factor), ][1, ]
+
+best_team_sentence <- cat(best_team$Squad, 
+"are the best overall team across the top five leagues in Europe, with", 
+best_team$GF, "\ngoals scored and conceding", 
+best_team$GA, "goals while obtaining an average of", 
+best_team$PointsPerMatch, "points per match. \nThey are currently ranked", 
+best_team$LeagueRank, "in their league,", best_team$Comp, ".")
+```
+
+```{r}
+# Select the worst team based on GF, GA, PointsPerMatch, xG, xGD and Last5Factor
+worst_team <- df[order(df$GF, -df$GA, df$PointsPerMatch, df$xG, 
+                       -df$xGA, df$Last5Factor), ][1, ]
+
+worst_team_sentence <- cat(worst_team$Squad, 
+"are the worst overall team across the top five leagues in Europe, with", 
+worst_team$GF, "\ngoals scored after conceding", 
+worst_team$GA, "goals and obtaining an average of", 
+worst_team$PointsPerMatch, "points per match.\nThey are currently ranked", 
+worst_team$LeagueRank, "in their league,", worst_team$Comp, ".")
+```
+
+Interestingly, Bayern Munich have the best statistics for team performance across all five leagues but sit second in the Bundesliga table. Whereas, Empoli have the worst statistics and are not bottom of the Serie A. It would be assumed that the best and worst performing teams across all leagues would be top and bottom of their respective leagues. However, the data shows otherwise. This could mean Bayern Munich may be scoring a lot of goals (GF) and conceding very few (GA) in the games they win, but also scoring very few in the games they lose or draw. Whereas, Empoli may have lost by large margins, to worsen their goals conceded statistics (GA).
+
+### Correlation between League Rank and Recent Form
+
+Using Spearman's correlation to evaluate the relationship between teams' performance over the last five games (as represented by the Last5Factor) and their respective league rankings (LeagueRank). This method was suitable because it doesn't assume a linear relationship between the variables and is less sensitive to outliers, making it more reliable given the ordinal nature of Last5Factor and the potential non-linear relationship with LeagueRank.
+
+```{r}
+# Calculate Spearman correlation using ranks of 'Last5Factor'
+correlation_last5_leaguerank <- cor(rank(df$Last5Factor), df$LeagueRank, 
+                                    method = "spearman", use = "complete.obs")
+print(correlation_last5_leaguerank)
+```
+
+```{r}
+plot(df$LeagueRank, as.numeric(df$Last5Factor), main = "League Rank vs Last 5 Games",
+     xlab = "League Rank", ylab = "Last 5 Games", pch = 19)
+# Adding a linear regression line to the plot
+abline(lm(as.numeric(df$Last5Factor) ~ df$LeagueRank), col = "blue") 
+```
+
+This scatter plot shows a Spearman correlation of -0.748087 between a team's league rank and their performance in the last five games, suggesting a moderately strong inverse relationship. As the league rank increases (with 1 being the highest), the performance in the last five games tends to decrease, indicating that teams with a lower rank (higher numerical value) have not performed as well recently.
+
+This is to be expected with, as lower ranked teams have recently shown poorer performance, but further investigation is needed into the outliers on this scatter plot.
+
+### In-Form and Poor-Form Teams Analysis
+
+Analysing the performance of the teams in the top and bottom half of the table while considering their form based on the Last5Factor, representative of the points gained in these previous fixtures.
+
+```{r}
+unique_levels <- levels(df$Last5Factor)
+# Set the top performing threshold to be in the top 1/3 of performance rankings
+top_threshold_level <- ceiling(length(unique_levels) * 2 / 3)
+top_threshold_level <- unique_levels[top_threshold_level]
+in_form_lower_rank_teams <- df %>%
+  # Set the league rank to be less than or equal to 10 as there are 
+  # different league lengths
+  filter(Last5Factor > top_threshold_level & LeagueRank >= 10) %>%
+  select(Squad, LeagueRank, GF, GA, Points, Last5, Last5Factor)
+
+kable_output <- kable(in_form_lower_rank_teams, format = "html", 
+                      caption = "In-Form Lower League Rank Teams")
+kable_output
+```
+
+From the table above, we can see Everton and Bournemouth are the highest performing teams in the lower end of all five leagues. These teams are reflective of the two obvious outliers in the upper, right quadrant of the scatterplot graph 'League Rank vs Last 5 Games'. Bournemouth may have had lower ranked opponents for their previous five games. While Everton, have recently suffered a 10 point deduction due to breaching Financial Fair Play regulations. This led them to drop into the lower half of the table, even though they have a considerably strong team.
+
+```{r}
+unique_levels <- levels(df$Last5Factor)
+# Set the top performing threshold to be in the bottom 1/3 of performance rankings
+bottom_threshold_level <- floor(length(unique_levels) * 1 / 3)
+bottom_threshold_level <- unique_levels[bottom_threshold_level]
+
+poor_form_high_rank_teams <- df %>%
+  # Set the league rank to be greater than or equal to 10 as there are 
+  # different league lengths
+  filter(Last5Factor <= bottom_threshold_level & LeagueRank <= 10) %>%
+  select(Squad, LeagueRank, GF, GA, Points, Last5, Last5Factor)
+
+kable_output <- kable(poor_form_high_rank_teams, format = "html", 
+                      caption = "Poor Form High League Rank Teams")
+kable_output
+```
+
+On the contrary, Atlanta, Eintract Frankfurt, Reims and Valencia represent the teams in the upper half of the league tables but are considered in poor form based on their last five games.
+
+```{r}
+# Use the threshold levels to represent in form and not in form teams
+in_form_teams <- df[df$Last5Factor > top_threshold_level, ]
+not_in_form_teams <- df[df$Last5Factor < bottom_threshold_level, ]
+combined_data <- rbind(in_form_teams, not_in_form_teams)
+combined_data$status <- rep(c("In Form", "Not In Form"), 
+                            times = c(nrow(in_form_teams), nrow(not_in_form_teams)))
+
+long_data <- combined_data %>% 
+             gather(key = "GoalType", value = "Goals", GF, GA)
+
+ggplot(long_data, aes(x = GoalType, y = Goals, fill = status)) +
+  geom_violin(trim = FALSE) +
+  facet_wrap(~status) +
+  labs(title = "Goal Distribution: In Form vs. Not In Form Teams",
+       x = "",
+       y = "Goals") +
+  theme_minimal()
+```
+
+'In-Form' teams are those in the top 1/3 of performance rankings based on their Last5Factor (points gained in their last five fixtures). Whereas, 'not In-Form' teams are those considered in the bottom 1/3 of the performance rankings.
+
+The violin plot reveals that 'In Form' teams are not only better at scoring goals but also more consistent in their defensive play, contributing to their better form. In contrast to this, 'Not In Form' teams struggle more in both scoring and preventing goals, reflected in their broader distribution of 'GoalsAgainst' and lower and narrower distribution of 'GF'.
+
+### Analysis of the Relationship between Team Performance and Wages
+
+Investigating the relationship between a team's performance and its wage expenditure throughout the season to provide insights into whether a club's financial spending is linked to its success.
+
+```{r}
+# Select top 25% of teams based on PointsPerMatch
+top_percentile <- 0.25
+top_teams_by_points <- df[order(-df$PointsPerMatch), ][1:(nrow(df) * 
+                                                            top_percentile), ]
+
+# Select the bottom 20% in WeeklyWages(EUR)
+lowest_wage_percentile <- 0.20
+selected_teams <- top_teams_by_points[
+                order(top_teams_by_points$`WeeklyWages(EUR)`), ]
+final_selection <- selected_teams[
+                1:(nrow(selected_teams) * lowest_wage_percentile), ]
+
+final_sorted_selection <- final_selection[order(final_selection$LeagueRank), ]
+final_sorted_selection_filtered <- final_sorted_selection %>%
+  select(Squad, Comp, LeagueRank, GF, GA, PointsPerMatch, `WeeklyWages(EUR)`, 
+         Last5Factor)
+kable(final_sorted_selection_filtered)
+```
+
+The teams listed above are among the top performers based on their success rate in the league and weekly wage expenditures. Girona and Nice rank second in their respective leagues, averaging 2.56 and 2.00 points per game, while Lille and Brest hold fourth and fifth position in Ligue 1, with a PointsPerMatch ratio of 1.75 each.
+
+```{r}
+plot(df$PointsPerMatch, df$'WeeklyWages(EUR)',
+     main = "Weekly Wages vs Points Per Match",
+     xlab = "Points Per Match",
+     ylab = "Weekly Wages (EUR)",
+     pch = 16)
+
+# Adding a linear regression line to the plot
+abline(lm(df$'WeeklyWages(EUR)' ~ df$PointsPerMatch), col = "blue")
+
+```
+
+The scatter plot suggests a general trend where higher wages are associated with better team performance, but it also highlights that wages are not the sole determinant of success, and efficient management and other factors can also lead to high performance.
+
+```{r}
+# Sort the dataframe for the best ranked teams based on the variables listed
+sorted_df <- df %>%
+  arrange(desc(PointsPerMatch)) %>%
+  head(5) %>%
+  select(Squad, Comp, LeagueRank, GF, GA, PointsPerMatch, 
+         `WeeklyWages(EUR)`, `AnnualWages(EUR)`)
+
+kable_output <- kable(sorted_df, format = "html", 
+                      caption = "Top 5 Teams by Points per Match")
+kable_output
+```
+
+The table above highlights that, at the season's midpoint, Girona is the second highest performing team in Europe's top five leagues. Their wage expenditure is significantly lower in comparison to the other teams on this list, this indicates that they are exceeding expectations for their season.
+
+### Analysis of Goal Distribution
+
+Exploring the distribution of goals in each league and comparing these actual figures against their expected statistics for the first half of the season.
+
+```{r}
+# Extract the top 5 teams from each country based on league ranking
+# Calculate the total goals scored and conceded 
+top_5_teams <- df %>%
+  filter(LeagueRank <= 5) %>%
+  group_by(Country) %>%
+  summarize(
+    TotalGoalsFor = sum(GF),
+    TotalGoalsAgainst = sum(GA)
+  ) %>%
+  ungroup()
+
+plot_data_top <- top_5_teams %>%
+  pivot_longer(
+    cols = c(TotalGoalsFor, TotalGoalsAgainst),
+    names_to = "Metric",
+    values_to = "TotalGoals"
+  )
+
+p_top <- ggplot(plot_data_top, aes(x = Country, y = TotalGoals, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Country", y = "Total Goals (Top 5 Teams)") +
+  scale_fill_manual(values = c("TotalGoalsFor" = "darkred", 
+                               "TotalGoalsAgainst" = "lightblue")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+print(p_top)
+```
+
+By analysing the goal distribution of the top five teams in each league, the Bundesliga (Germany) slightly edges the Premier League (England) with the most goals scored. When comparing Bundesliga (Germany), with Ligue 1 (France), who both have 18 teams in their league, the top five teams in Ligue 1 (France) accumulated fewer goals scored. Serie A (Italy) accumlated the least amount of goals scored.
+
+```{r}
+# Select the mid table teams to check their goal difference stats
+middle_10_teams <- df %>%
+  filter(LeagueRank >= 4 & LeagueRank <= 13) %>%
+  group_by(Country) %>%
+  summarize(
+    TotalGoalDifference = sum(GD),
+    TotalXGD = sum(xGD) 
+  ) %>%
+  ungroup()
+
+# Filtering for overall goal difference and overall xGD
+plot_data_middle <- middle_10_teams %>%
+  pivot_longer(
+    cols = c(TotalGoalDifference, TotalXGD), 
+    names_to = "Legend",
+    values_to = "TotalValues"
+  )
+
+custom_colors <- c("TotalGoalDifference" = "lightblue", "TotalXGD" = "darkred") 
+
+p_middle <- ggplot(plot_data_middle, aes(y = Country, x = TotalValues, 
+                                         fill = Legend)) +
+  geom_bar(stat = "identity", position = "dodge", orientation = "y") + 
+  labs(y = "Country", x = "Total Values (Middle 10 Teams)") +
+  scale_fill_manual(values = custom_colors, 
+                    labels = c("Total Goal Difference", "Total XGD")) + 
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(angle = 45, hjust = 1), 
+    legend.position = "top"
+  )
+
+print(p_middle)
+```
+
+This horizontal bar chart illustrates the goal difference compared to the expected goal difference for mid-table teams across five leagues. Among these, the Bundesliga (Germany) and Ligue 1 (France) stand out in terms of their goal distribution and its alignment with expected statistics. Notably, the Bundesliga is unique in having a negative goal difference for its mid-table teams. In contrast, Ligue 1 is distinguished as the only league where the actual goal difference does not surpass the expected goal difference.
+
+```{r}
+# Function to generate line plots for specific league
+generate_league_plot <- function(league_name, country_code) {
+  league_df <- df[df$Country == country_code & df$Comp == league_name, ]
+  goal_data <- aggregate(cbind(GF, xG) ~ Squad, data = league_df, sum)
+  goal_data$Squad <- factor(goal_data$Squad, 
+                            levels = goal_data$Squad[order(goal_data$GF)])
+  
+  # Line plot to illustrate the differences between GF and xG
+  p <- ggplot(goal_data, aes(x = Squad)) +
+    geom_line(aes(y = GF, color = "GF", group = 1), linewidth = 0.6) +
+    geom_point(aes(y = GF, color = "GF", group = 1), size = 2) +
+    geom_line(aes(y = xG, color = "xG", group = 2), linewidth = 0.6) +
+    geom_point(aes(y = xG, color = "xG", group = 2), size = 2) +
+    labs(title = league_name,
+         x = "Squad",
+         y = "Goals") +
+    scale_color_manual(values = c("GF" = "black", "xG" = "red"),
+                       labels = c("Goals Scored", "Expected Goals"),
+                       name = "Legend") +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),  
+          axis.title.x = element_blank(),  
+          legend.position = "top",  
+          legend.title = element_blank(),  
+          legend.key.size = unit(1, "cm"))
+  
+  return(p)
+}
+
+plot_bundesliga <- generate_league_plot("Bundesliga", "GER")
+plot_ligue1 <- generate_league_plot("Ligue 1", "FRA")
+plot_bundesliga + plot_ligue1
+```
+
+The comparison line plot reveals that in the Bundesliga (Germany), there is a noticeable skew in the goals scored distribution. The top four teams have each scored over 30 goals, contributing to the larger goal differences observed among the mid-table teams in this league. In contrast, Ligue 1 (France) shows a more balanced distribution of goals across most teams, with Monaco and Paris St Germain being notable exceptions. Interestingly, only six teams in the Bundesliga exceeded their expected goals, compared to thirteen in Ligue 1. This pattern could explain why mid-table teams in Ligue 1 have a lower actual goal difference compared to their expected goal difference.
+
+### Impact of Top Striker
+
+The analysis will explore the performance of the top strikers from each team in the Bundesliga (Germany), which presents the most obscure statistics thus far. This investigation aims to determine the extent of team reliance on individual players for goal scoring, as opposed to a more distributed contribution among various players.
+
+```{r}
+# Selecting Bundesliga clubs only
+bundesliga_df <- df %>%
+  filter(Comp == "Bundesliga") %>%
+  mutate(Squad = factor(Squad, levels = Squad[order(LeagueRank)])) 
+
+ggplot(bundesliga_df, aes(x = Squad)) +
+  geom_segment(aes(x = Squad, xend = Squad, y = 0, yend = GF), color = "black") + 
+  geom_point(aes(y = GF), size = 3, color = "darkred") +  
+  geom_line(aes(y = GoalsScored, group = 1, linetype = "Striker's Goals"), 
+            color = "red") +  
+  geom_point(aes(y = GoalsScored), size = 1, color = "red") +  
+  coord_flip() +  
+  labs(title = "Top Striker Goals and Goals Scored by Bundesliga Teams",
+       x = "",
+       y = "Goals Scored by Team",
+       linetype = "Metric") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) +
+  scale_linetype_manual(values = "dashed", labels = "Striker's Goals")
+
+```
+
+```{r}
+bundesliga_table <- df %>%
+  filter(Comp == "Bundesliga") %>%
+  mutate(PercentageOfGoals = (GoalsScored / GF) * 100) %>%  
+  select(Squad, LeagueRank, GF, xG, TopScorer, GoalsScored, PercentageOfGoals) %>%
+  arrange(LeagueRank) # Sorting by LeagueRank
+
+# Replace NA values with 0 in PercentageOfTeamGoals
+bundesliga_table$PercentageOfGoals[is.na(bundesliga_table$PercentageOfGoals)] <- 0
+
+# Using kable to create a table
+kable(bundesliga_table, format = "html", 
+      caption = "Bundesliga Teams, Their Top Scorers, and Scoring Contribution")
+```
+
+The leading two teams in the league exhibit contrasting goal-scoring patterns for the season. Leverkusen, currently first, has netted 42 goals, with Victor Boniface contributing to 21% of these. Meanwhile, Bayern Munich, currently in second place, has scored 47 goals, with Harry Kane accounting for 43% of them. Notably, Leverkusen outperformed their expected goals by the largest margin, having scored 42 goals against an expected tally of 30.4.
+
+## Part 2: R Package
+
+This section will demonstrate the forecast package. The forecast package in R offers a variety of methods and tools designed for analysing and visualising uni variate time series forecasts. This includes implementing exponential smoothing through state space models and facilitating automatic ARIMA modeling. I will showcase the essential features of this package, 'forecast()', 'auto.arima()', 'tbats()', 'accuracy()', 'ACF' and 'residuals()'. The dataset used in this section is called AirPassengers.csv and it is available at \[Air Passengers\] (https://www.kaggle.com/datasets/chirag19/air-passengers). It will also be included with my submission.
+
+```{r}
+airpassengers <- read_csv(
+  "~/Documents/Data_Programming_R/Assignment_3/AirPassengers.csv",
+        col_types = cols(
+            Month = col_date(format = "%Y-%m"),
+                `#Passengers` = col_double()
+                          ))
+
+# Convert the '#Passengers' column to a time series object
+start_year <- as.numeric(format(min(airpassengers$Month), "%Y"))
+start_month <- as.numeric(format(min(airpassengers$Month), "%m"))
+frequency <- 12 # Monthly data
+passengers_ts <- ts(airpassengers$`#Passengers`, start=c(start_year, start_month), 
+                    frequency=frequency)
+```
+
+### auto.arima() & forecast()
+
+The 'auto.arima()' function in R simplifies the process of selecting an ARIMA model, which is essential for forecasting time series data where trends and seasonality are present. It automates the model building process by determining the optimal combination of differencing, autoregression, and moving average components. This function evaluates various model specifications based on information criteria such as AIC, streamlining what would otherwise be a complex and manual selection process.
+
+In conjunction with 'auto.arima()', the 'forecast()' function is used to project future values from the chosen model. It generates point forecasts along with associated confidence intervals, reflecting the uncertainty of predictions. The 'forecast()' function adapts to the structure of several time series models and allows for setting the forecast horizon, making it a versatile tool for both short-term and long-term predictions. The output can be easily visualised, providing clear insights into expected future trends and patterns in the data
+
+```{r}
+fit_arima <- auto.arima(passengers_ts)
+# h set to 24 to predict 24 months in advance
+forecasted_values_arima <- forecast(fit_arima, h=24) 
+
+plot(forecasted_values_arima, main="Arima Model - Air Passenger Traffic Forecast", 
+     xlab="Year", ylab="Number of Passengers", col = "blue")
+```
+
+The graph displays the historical data and projected future values for air passenger traffic. The historical data, shown in blue, indicates a clear upward trend and a repeating seasonal pattern. The forecast beyond the historical data is also plotted in blue, with a lighter shade indicating the confidence intervals for future predictions. The model suggests that the trend of increasing passengers is expected to continue, with seasonal peaks and troughs persisting annually. The widening confidence intervals into the future reflect greater uncertainty in these longer-term predictions showing that peak of total passengers after 1962 may be 700 ± 60.
+
+### tbats()
+
+'tbats()' is used instead of 'ets()' due to the presence of multiple seasonal patterns in the dataset.
+
+The 'tbats()' function in R is tailored for time series data exhibiting complex seasonality, potentially with multiple seasonal periods or non-integer seasonality. It stands for "Trigonometric seasonality, Box-Cox transformation, ARMA errors, Trend, and Seasonal components," representing the various elements this model can handle. This function fits a state-space model and is particularly useful when traditional models, like ARIMA, fall short, such as in cases where the seasonal pattern varies over time or when the data contains more than one type of seasonality. The inclusion of a Box-Cox transformation allows the model to stabilize variance, which is beneficial for data with non-constant variance over time. Overall, 'tbats()' is a comprehensive tool for modeling time series data with intricate seasonal structures.
+
+```{r}
+fit_tbats <- tbats(passengers_ts)
+forecasted_values_tbats <- forecast(fit_tbats, h=24)
+
+plot(forecasted_values_tbats, main="tbats Model - Air Passenger Traffic Forecast", 
+     xlab="Year", ylab="Number of Passengers", col = "blue")
+```
+
+The TBATS graph is crucial when dealing with time series that exhibit complex seasonal patterns, which may include multiple frequencies or non-integer seasonality. Unlike the ARIMA model, which assumes a single, fixed seasonal pattern, TBATS can adapt to more intricate seasonal structures within the data, potentially leading to more accurate forecasts when such complexities are present. While the ARIMA graph provides a forecast based on simpler, more traditional seasonality, the TBATS graph is particularly valuable when the time series data requires a nuanced approach to capture the variability and multiplicity of seasonal effects, offering a more flexible forecasting tool for such scenarios.
+
+The forecast, starting around 1961, suggests that passenger numbers could reach somewhere above 600, but with some uncertainty as the confidence intervals widen over time. These intervals, shown in shades of gray, indicate a broader range of possible outcomes as the forecast extends further into the future, a common characteristic as the forecast horizon increases.
+
+### accuracy()
+
+The 'accuracy()' function provides a comprehensive set of error metrics that help in evaluating the performance of forecast models. When used with a forecast object and the corresponding actual values, it returns metrics such as the Mean Error (ME), Root Mean Squared Error (RMSE), Mean Absolute Error (MAE), Mean Percentage Error (MPE), Mean Absolute Percentage Error (MAPE), and others. These metrics are essential for understanding how well the model predicts and are crucial for model comparison and selection.
+
+```{r}
+# Accuracy values for the Arima model
+train_set <- window(passengers_ts, end=c(1958,12))
+test_set <- window(passengers_ts, start=c(1959,1))
+fit_arima <- auto.arima(train_set)
+
+forecasted_values_arima <- forecast(fit_arima, h=24) 
+accuracy_arima <- accuracy(forecasted_values_arima, test_set)
+accuracy_arima <- as.data.frame(accuracy_arima)
+
+kable(accuracy_arima, caption = "ARIMA Model Accuracy")
+```
+
+```{r}
+# Accuracy values for the TBATS model
+fit_tbats <- tbats(train_set)
+
+forecasted_values_tbats <- forecast(fit_tbats, h=24)
+accuracy_tbats <- accuracy(forecasted_values_tbats, test_set)
+accuracy_tbats <- as.data.frame(accuracy_tbats)
+kable(accuracy_tbats, caption = "TBATS Model Accuracy")
+```
+
+In comparing the ARIMA and TBATS models using the provided accuracy metrics for the test set, the TBATS model consistently demonstrates superior performance across key indicators. With lower values in Mean Error (ME), Root Mean Squared Error (RMSE), and Mean Absolute Error (MAE), the TBATS model indicates a tendency towards smaller average and overall errors. Furthermore, its lower Mean Percentage Error (MPE) and Mean Absolute Percentage Error (MAPE) suggest a reduced bias in percentage terms, reinforcing its enhanced accuracy. The Mean Absolute Scaled Error (MASE) and Theil's U statistic also favour the TBATS model, indicating a more accurate forecasting capability compared to the ARIMA model, as well as a better performance relative to a simple benchmark. Collectively, these metrics suggest that TBATS is more adept at capturing the underlying patterns in this specific dataset, particularly in handling complex seasonalities, thereby providing more reliable forecasts for the test period.
+
+### ACF & residuals()
+
+The function in R is designed to perform diagnostic checks on the residuals of a time series forecasting model. It helps to validate that the residuals, which are the differences between the observed and fitted values, behave like white noise---randomly distributed around zero without autocorrelation. If the residuals display patterns or systematic structures, it suggests that the model may not be fully capturing the underlying process of the data. The function typically outputs a time plot, an ACF plot to check for correlations, and a histogram or density plot to examine the distribution of the residuals. Statistical tests for white noise, such as the Ljung-Box test, are also conducted and reported. This function is a critical tool for ensuring the reliability of the forecasting model.
+
+```{r}
+residuals_arima <- residuals(fit_arima)
+plot(residuals_arima, main="Residuals of ARIMA Model", xlab="Time", ylab="Residuals")
+# ACF plot of residuals
+Acf(residuals_arima, main="ACF of ARIMA Model Residuals")
+# Histogram with density plot of residuals
+hist(residuals_arima, probability = TRUE, main="Histogram of ARIMA Model Residuals", 
+     xlab="Residuals")
+lines(density(residuals_arima), col="red")
+
+```
+
+The time plot of residuals does not display any obvious patterns or trends, suggesting that the residuals may be randomly distributed around zero, as desired. The ACF plot shows that most autocorrelations are within the confidence bounds, indicating that there is little evidence of autocorrelation in the residuals. This suggests the model has adequately captured the information in the data. The histogram of the residuals, along with the overlaid density plot, suggests that the residuals are roughly normally distributed, albeit with some potential outliers, as the density plot does not perfectly match the normal distribution.
+
+## Part 3: Functions/Programming
+
+A class created to identify outliers in numeric data by calculating the Interquartile Range (IQR) and defining outliers as data points lying beyond the bounds set by a specified multiplier of the IQR. It returns a list containing the outliers and these calculated bounds. I have set the outlier threshold to be 2 standard deviations away from the mean to find the most extreme outliers in the dataset.
+
+```{r}
+timeSeriesOutliers <- function(ts_data, threshold = 2) {
+  if (!is.ts(ts_data)) {
+    stop("Data must be a time series object.")
+  }
+  # Calculate the mean and standard deviation of the dataset
+  mean_ts <- mean(ts_data, na.rm = TRUE)
+  sd_ts <- sd(ts_data, na.rm = TRUE)
+  # Determine which data points are outliers based on the 
+  # threshold of standard deviations
+  is_outlier <- abs(ts_data - mean_ts) > threshold * sd_ts
+  outlier_values <- ts_data[is_outlier]
+  outlier_indices <- time(ts_data)[is_outlier]
+  result <- list(original_series = ts_data, outliers = outlier_values, 
+                 indices = outlier_indices, threshold = threshold)
+  class(result) <- "timeSeriesOutliers"
+  return(result)
+}
+
+result <- timeSeriesOutliers(passengers_ts)
+class(result)
+```
+
+The 'print.timeSeriesOutliers' function defines a custom print method for objects of the class 'timeSeriesOutliers', outputting a header, the number of detected outliers, and separators for readability, when the print command is executed.
+
+```{r}
+print.timeSeriesOutliers <- function(object) {
+  cat("Time Series Outliers Detection\n")
+  cat("===============================\n")
+  cat("Number of Outliers:", length(object$outliers), "\n")
+  cat("===============================\n")
+}
+
+print(result)
+```
+
+This prints out a formatted summary including the total number of observations in the time series, the threshold for defining outliers in terms of standard deviations, and the actual values identified as outliers.
+
+```{r}
+summary.timeSeriesOutliers <- function(object) {
+  cat("\nSummary of Time Series Outliers Detection\n")
+  cat("==========================================\n")
+  cat("Total Observations:", length(object$original_series), "\n")
+  cat("Outlier Threshold (Standard Deviations):", object$threshold, "\n")
+  cat("Outlier Values:", toString(object$outliers), "\n")
+  cat("==========================================\n")
+}
+
+summary(result)
+```
+
+This generates a plot of the original time series data, marks the outliers in red, and includes a legend in the top left corner to label these points as outliers.
+
+```{r}
+plot.timeSeriesOutliers <- function(object) {
+  plot(object$original_series, main = "Time Series with Outliers", ylab = "Value", 
+       xlab = "Time", type = "o")
+  points(object$indices, object$outliers, col = "red", pch = 19)
+  legend("topleft", inset=c(0.03, 0.03), legend = "Outliers", col = "red", pch = 19, 
+         bg='white')
+}
+
+plot(result)
+```
+
+The function effectively identified and summarised outliers in the time series data, using a standard deviation threshold to determine which points fell outside the expected range. The summary provided a clear count of outliers and their values, while the graph visually represented these points, distinguishing them from the overall data trend. The analysis showed that the outliers were significant deviations, offering valuable insights into the distribution and variance within the time series.
